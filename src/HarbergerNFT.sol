@@ -24,8 +24,25 @@ contract HarbergerNFT {
     error NotOwner();
     error InvalidMint();
     error InvalidSignature();
+    error NotMinted();
+    error Reentry();
 
     event Minted(address indexed newOwner, uint256 indexed tokenId);
+
+    modifier lock() {
+        uint256 isLocked;
+        assembly {
+            isLocked := tload(0)
+        }
+        if (isLocked != 0) revert Reentry();
+        assembly {
+            tstore(0, 1)
+        }
+        _;
+        assembly {
+            tstore(0, 0)
+        }
+    }
 
     constructor(uint256 _maxAmount, uint256 _defaultPrice, uint256 _taxRate) payable {
         require(_maxAmount > 0);
@@ -66,69 +83,80 @@ contract HarbergerNFT {
         emit Minted(msg.sender, tokenId);
     }
 
-  /*function buy(uint256 _tokenId, uint256 _newPrice) external payable {
-    //require(_exists(_tokenId), "Not minted");
-    address oldOwner = ownerOf(_tokenId);
-    uint256 price = prices[_tokenId];
-    uint256 taxToPay = calculateTax(price, _tokenId);
-    uint256 balance = deposits[_tokenId];
-    uint256 priceToSell;
-    uint256 oldOwnerAmount;
-    if (taxToPay > balance) {
-      priceToSell = INITIAL_PRICE;
-    } else {
-      priceToSell = price;
-      oldOwnerAmount = balance - taxToPay + price;
+    function buy(uint256 tokenId, uint128 newPrice) external payable {
+        TokenInfo storage info = _tokenInfos[tokenId];
+        address oldOwner = info.owner;
+        if (oldOwner == address(0)) revert NotMinted();
+        uint256 balance = info.deposit;
+        uint256 price = info.price;
+        uint256 taxToPay = _calculateTax(price, info.priceTime);
+        uint256 priceToSell;
+        uint256 oldOwnerAmount;
+        if (taxToPay < balance) {
+            priceToSell = price;
+            unchecked {
+                oldOwnerAmount = balance - taxToPay + price;
+            }
+        } else {
+            priceToSell = DEFAULT_PRICE;
+        }
+
+        if (msg.value < priceToSell) revert InsufficientFunds();
+        info.owner = msg.sender;
+        info.price = newPrice;
+        info.priceTime = uint96(block.timestamp);
+        info.deposit = uint128(msg.value - priceToSell);
+
+        if (oldOwnerAmount > 0) {
+            // TODO fix this
+            (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
+            s;
+        }
     }
 
-    if (msg.value < priceToSell) revert InsufficientFunds();
-    _transfer(oldOwner, msg.sender, _tokenId);
-    prices[_tokenId] = _newPrice;
-    priceTimes[_tokenId] = block.timestamp;
-    deposits[_tokenId] = msg.value - priceToSell;
+    function setPrice(uint256 tokenId, uint128 newPrice) external {
+        TokenInfo storage info = _tokenInfos[tokenId];
+        if (msg.sender != info.owner) revert NotOwner();
 
-    if (oldOwnerAmount > 0) {
-      (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
-      require(s, "Failed to send old owner funds");
-    }
-  }
+        uint256 taxToPay = _calculateTax(info.price, info.priceTime);
+        uint256 balance = info.deposit;
+        if (taxToPay < balance) {
+            unchecked {
+                balance -= taxToPay;
+            }
+        } else {
+            balance = 0;
+        }
 
-  function setPrice(uint256 _tokenId, uint256 _newPrice) external {
-    if (msg.sender != ownerOf(_tokenId)) revert NotOwner();
-
-    uint256 taxToPay = calculateTax(prices[_tokenId], _tokenId);
-    if (taxToPay > deposits[_tokenId]) {
-      delete deposits[_tokenId];
-    } else {
-      deposits[_tokenId] -= taxToPay;
+        info.deposit = uint128(balance);
+        info.price = newPrice;
+        info.priceTime = uint96(block.timestamp);
     }
 
-    prices[_tokenId] = _newPrice;
-    priceTimes[_tokenId] = block.timestamp;
-  }
-
-  function deposit(uint256 _tokenId) external payable {
-    deposits[_tokenId] += msg.value;
-  }
-
-  //TODO: double check this
-  function withdraw(uint256 _tokenId, uint256 _amount) external {
-    address owner = ownerOf(_tokenId);
-    if (msg.sender != owner) revert NotOwner();
-
-    uint256 balance = deposits[_tokenId];
-    uint256 taxToPay = calculateTax(prices[_tokenId], _tokenId);
-    if (taxToPay < balance) {
-      uint256 fundsLeft = balance - taxToPay;
-      if (fundsLeft < _amount) revert InsufficientFunds();
-
-      deposits[_tokenId] = fundsLeft - _amount;
-      (bool s,) = owner.call{value: _amount}("");
-      require(s, "Failed to send owner funds");
-    } else {
-      revert InsufficientFunds();
+    function deposit(uint256 tokenId) external payable {
+        _tokenInfos[tokenId].deposit += uint128(msg.value);
     }
-  }*/
+
+    //TODO: double check this
+    function withdraw(uint256 tokenId, uint256 amount) external {
+        TokenInfo storage info = _tokenInfos[tokenId];
+        if (msg.sender != info.owner) revert NotOwner();
+
+        uint256 balance = info.deposit;
+        uint256 taxToPay = _calculateTax(info.price, info.priceTime);
+        if (taxToPay < balance) {
+            unchecked {
+                uint256 fundsLeft = balance - taxToPay;
+                if (fundsLeft < amount) revert InsufficientFunds();
+
+                info.deposit = uint128(fundsLeft - amount);
+                (bool s,) = msg.sender.call{value: amount}("");
+                require(s, "Failed to send funds");
+            }
+        } else {
+            revert InsufficientFunds();
+        }
+    }
 
     function getTokenInfo(uint256 tokenId) external view returns (
         address owner,
