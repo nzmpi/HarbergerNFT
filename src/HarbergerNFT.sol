@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 contract HarbergerNFT {
     uint256 constant ONE_YEAR = 365 days;
-    // keccak256(abi.encode(uint256(keccak256("LIST.SLOT")) - 1)) & ~bytes32(uint256(0xff))
-    uint256 constant LIST_SLOT = 5337290524970025835332862666762577392465496233594089120533011026829033552640;
+    // keccak256(abi.encode(uint256(keccak256("LIST_SLOT")) - 1)) & ~bytes32(uint256(0xff))
+    uint256 constant LIST_SLOT = 36774421528551533216570696737164983923400338544039802950506299840970426934528;
     address public immutable DEPLOYER;
     uint256 public immutable DEFAULT_PRICE;
     // 1 == 0.1%
@@ -26,16 +26,18 @@ contract HarbergerNFT {
     error InvalidSignature();
     error NotMinted();
     error Reentry();
+    error InvalidSend();
 
     event Minted(address indexed newOwner, uint256 indexed tokenId);
+    event Bought(address indexed newOwner, uint256 indexed tokenId);
 
     modifier lock() {
-        uint256 isLocked;
         assembly {
-            isLocked := tload(0)
-        }
-        if (isLocked != 0) revert Reentry();
-        assembly {
+            if eq(tload(0), 1) {
+                // Reentry.selector
+                mstore(0, 0x976f9b8400000000000000000000000000000000000000000000000000000000)
+                revert(0, 4)
+            }
             tstore(0, 1)
         }
         _;
@@ -83,7 +85,7 @@ contract HarbergerNFT {
         emit Minted(msg.sender, tokenId);
     }
 
-    function buy(uint256 tokenId, uint128 newPrice) external payable {
+    function buy(uint256 tokenId, uint128 newPrice) external payable lock {
         TokenInfo storage info = _tokenInfos[tokenId];
         address oldOwner = info.owner;
         if (oldOwner == address(0)) revert NotMinted();
@@ -108,13 +110,14 @@ contract HarbergerNFT {
         info.deposit = uint128(msg.value - priceToSell);
 
         if (oldOwnerAmount > 0) {
-            // TODO fix this
             (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
             s;
         }
+
+        emit Bought(msg.sender, tokenId);
     }
 
-    function setPrice(uint256 tokenId, uint128 newPrice) external {
+    function setPrice(uint256 tokenId, uint128 newPrice) external lock {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
 
@@ -133,12 +136,11 @@ contract HarbergerNFT {
         info.priceTime = uint96(block.timestamp);
     }
 
-    function deposit(uint256 tokenId) external payable {
+    function deposit(uint256 tokenId) external payable lock {
         _tokenInfos[tokenId].deposit += uint128(msg.value);
     }
 
-    //TODO: double check this
-    function withdraw(uint256 tokenId, uint256 amount) external {
+    function withdraw(uint256 tokenId, uint256 amount) external lock {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
 
@@ -149,9 +151,9 @@ contract HarbergerNFT {
                 uint256 fundsLeft = balance - taxToPay;
                 if (fundsLeft < amount) revert InsufficientFunds();
 
-                info.deposit = uint128(fundsLeft - amount);
+                info.deposit = uint128(balance - amount);
                 (bool s,) = msg.sender.call{value: amount}("");
-                require(s, "Failed to send funds");
+                if (!s) revert InvalidSend();
             }
         } else {
             revert InsufficientFunds();
@@ -160,23 +162,23 @@ contract HarbergerNFT {
 
     function getTokenInfo(uint256 tokenId) external view returns (
         address owner,
-        uint256 currentPrice,
+        uint256 price,
         uint256 depositLeft,
         uint256 timeLeft
     ) {
         TokenInfo storage info = _tokenInfos[tokenId];
         depositLeft = info.deposit;
-        currentPrice = info.price;
-        uint256 taxToPay = _calculateTax(currentPrice, info.priceTime);
+        price = info.price;
+        uint256 taxToPay = _calculateTax(price, info.priceTime);
         owner = info.owner;
         if (taxToPay < depositLeft) {
             unchecked {
                 timeLeft =
-                    ((depositLeft - taxToPay) * ONE_YEAR * 1000) / (currentPrice * TAX_RATE);
+                    ((depositLeft - taxToPay) * ONE_YEAR * 1000) / (price * TAX_RATE);
                 depositLeft -= taxToPay;
             }
         } else {
-            currentPrice = DEFAULT_PRICE;
+            price = DEFAULT_PRICE;
             depositLeft = 0;
         }
     }
@@ -230,8 +232,7 @@ contract HarbergerNFT {
         view
         returns (uint256)
     {
-        uint256 elapsedTime = block.timestamp - _priceTime;
-        return (_price * TAX_RATE * elapsedTime) / (ONE_YEAR * 1000);
+        return (_price * TAX_RATE * (block.timestamp - _priceTime)) / (ONE_YEAR * 1000);
     }
 
     // other ERC721 functions
