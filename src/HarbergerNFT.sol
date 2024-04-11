@@ -30,8 +30,10 @@ contract HarbergerNFT {
 
     event Minted(address indexed newOwner, uint256 indexed tokenId);
     event Bought(address indexed newOwner, uint256 indexed tokenId);
+    event Deposited(address indexed donor, uint256 indexed tokenId, uint256 amount);
+    event Withdrawn(address indexed sender, uint256 indexed tokenId, uint256 amount);
 
-    modifier lock() {
+    modifier guard() {
         assembly {
             if eq(tload(0), 1) {
                 // Reentry.selector
@@ -85,7 +87,7 @@ contract HarbergerNFT {
         emit Minted(msg.sender, tokenId);
     }
 
-    function buy(uint256 tokenId, uint128 newPrice) external payable lock {
+    function buy(uint256 tokenId, uint128 newPrice) external payable guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         address oldOwner = info.owner;
         if (oldOwner == address(0)) revert NotMinted();
@@ -111,13 +113,13 @@ contract HarbergerNFT {
 
         if (oldOwnerAmount > 0) {
             (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
-            s;
+            s;// remove unused warning
         }
 
         emit Bought(msg.sender, tokenId);
     }
 
-    function setPrice(uint256 tokenId, uint128 newPrice) external lock {
+    function setPrice(uint256 tokenId, uint128 newPrice) external guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
 
@@ -136,11 +138,12 @@ contract HarbergerNFT {
         info.priceTime = uint96(block.timestamp);
     }
 
-    function deposit(uint256 tokenId) external payable lock {
+    function deposit(uint256 tokenId) external payable guard {
         _tokenInfos[tokenId].deposit += uint128(msg.value);
+        emit Deposited(msg.sender, tokenId, msg.value);
     }
 
-    function withdraw(uint256 tokenId, uint256 amount) external lock {
+    function withdraw(uint256 tokenId, uint256 amount) external guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
 
@@ -158,6 +161,8 @@ contract HarbergerNFT {
         } else {
             revert InsufficientFunds();
         }
+
+        emit Withdrawn(msg.sender, tokenId, amount);
     }
 
     function getTokenInfo(uint256 tokenId) external view returns (
