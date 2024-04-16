@@ -54,13 +54,24 @@ contract HarbergerNFT {
         DEFAULT_PRICE = _defaultPrice;
         TAX_RATE = _taxRate;
 
-        uint256 len = _maxAmount / 256 + 1;
-        uint256 slotNumber;
-        uint256 max = type(uint256).max;
+        uint256 len = _maxAmount / 256;
+        uint256 slotNumber = LIST_SLOT;
+        uint256 value = type(uint256).max;
         for (uint256 i; i < len; ++i) {
-            slotNumber = LIST_SLOT + i;
             assembly {
-                sstore(slotNumber, max)
+                sstore(slotNumber, value)
+            }
+            ++slotNumber;
+        }
+
+        len = _maxAmount % 256;
+        if (len != 0) {
+            value = 1;
+            for (uint256 i; i < len; ++i) {
+                value = (value << 1) | 1;
+            }
+            assembly {
+                sstore(slotNumber, value)
             }
         }
     }
@@ -195,9 +206,10 @@ contract HarbergerNFT {
         (bytes32 r, bytes32 s, uint8 v) = _splitSignature(_signature);
         bytes32 messageHash = keccak256(bytes.concat(
             "\x19Ethereum Signed Message:\n",
-            "52", 
+            "72", 
             bytes20(msg.sender),
-            bytes32(_userId)
+            bytes32(_userId),
+            bytes20(address(this))
         ));
 
         // DEPLOYER is by default non-zero
