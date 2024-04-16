@@ -3,34 +3,39 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/HarbergerNFT.sol";
+import "./ExpensiveNFT.sol";
 
 contract TestHarbergerNFT is Test {
     Vm.Wallet deployer = vm.createWallet("deployer");
-    address user = makeAddr("user");
+    address immutable user = makeAddr("user");
+    address immutable fakeUser = makeAddr("fakeUser");
+    uint256 constant defaultPrice = 0.01 ether;
+    uint256 constant taxRate = 1;
+    uint256 constant userId = 1;
 
-    function test_valid_deployment(uint256 maxAmount, uint256 defaultPrice, uint256 taxRate) public {
+    function test_valid_deployment(uint256 maxAmount, uint256 defPrice, uint256 txRate) public {
         vm.skip(true);
         vm.assume(maxAmount > 0);
         vm.prank(deployer.addr);
-        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defPrice, txRate);
 
         assertEq(hNFT.DEPLOYER(), deployer.addr, "Wrong deployer");
-        assertEq(hNFT.DEFAULT_PRICE(), defaultPrice, "Wrong default price");
-        assertEq(hNFT.TAX_RATE(), taxRate, "Wrong tax rate");
+        assertEq(hNFT.DEFAULT_PRICE(), defPrice, "Wrong default price");
+        assertEq(hNFT.TAX_RATE(), txRate, "Wrong tax rate");
     }
 
     function test_valid_mint_one() public {
         vm.skip(false);
-
-        uint256 maxAmount = 1;
-        uint256 defaultPrice = 0.01 ether;
-        uint256 userId = 1;
+        uint256 maxAmount = 100;
         vm.prank(deployer.addr);
-        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, 1);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        vm.expectEmit();
+        emit HarbergerNFT.Minted(user, userId - 1);
 
         hoax(user, 2*defaultPrice);
         uint256 tokenId = hNFT.mint{value: 2*defaultPrice}(
-            _getSignature(user, userId),
+            _getSignature(user, userId, address(hNFT)),
             userId,
             uint128(3*defaultPrice)
         );
@@ -46,17 +51,323 @@ contract TestHarbergerNFT is Test {
         assertEq(currentPrice, 3 * defaultPrice, "Wrong current price");
         assertEq(depositLeft, defaultPrice, "Wrong deposit left");
         assertEq(timeLeft, 10512000000, "Wrong time left");
+
+        vm.warp(block.timestamp + timeLeft);
+        (
+            owner,
+            currentPrice,
+            depositLeft,
+            timeLeft
+        ) = hNFT.getTokenInfo(tokenId);
+
+        assertEq(owner, user, "Wrong owner after time skip");
+        assertEq(currentPrice, defaultPrice, "Wrong current price after time skip");
+        assertEq(depositLeft, 0, "Wrong deposit left after time skip");
+        assertEq(timeLeft, 0, "Wrong time left after time skip");
+    }
+
+    function test_valid_mint_two() public {
+        vm.skip(true);
+        uint256 maxAmount = 100;
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        hoax(user, 2*defaultPrice);
+        uint256 tokenId = hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId + 90, address(hNFT)),
+            userId + 90,
+            uint128(3*defaultPrice)
+        );
+
+        address anotherUser = makeAddr("another user");
+        hoax(anotherUser, 2*defaultPrice);
+        uint256 anotherTokenId = hNFT.mint{value: defaultPrice}(
+            _getSignature(anotherUser, userId + 42, address(hNFT)),
+            userId + 42,
+            uint128(5)
+        );
+
+        (
+            address owner,
+            uint256 currentPrice,
+            uint256 depositLeft,
+            uint256 timeLeft
+        ) = hNFT.getTokenInfo(tokenId);
+
+        assertEq(owner, user, "Wrong owner");
+        assertEq(currentPrice, 3 * defaultPrice, "Wrong current price");
+        assertEq(depositLeft, defaultPrice, "Wrong deposit left");
+        assertEq(timeLeft, 10512000000, "Wrong time left");
+
+        (
+            address anotherOwner,
+            uint256 anotherCurrentPrice,
+            uint256 anotherDepositLeft,
+            uint256 anotherTimeLeft
+        ) = hNFT.getTokenInfo(anotherTokenId);
+
+        assertEq(anotherOwner, anotherUser, "Wrong another owner");
+        assertEq(anotherCurrentPrice, defaultPrice, "Wrong another current price");
+        assertEq(anotherDepositLeft, 0, "Wrong another deposit left");
+        assertEq(anotherTimeLeft, 0, "Wrong another time left");
+    }
+
+    function test_gasUsage_one_mint() public {
+        vm.skip(true);
+        uint256 maxAmount = 10;
+
+        vm.startPrank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+        ExpensiveNFT eNFT = new ExpensiveNFT(maxAmount, defaultPrice, taxRate);
+        vm.stopPrank();
+
+        hoax(user, 2*defaultPrice);
+        uint256 gasBefore = gasleft();
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+        uint256 gasSpentHNFT = gasBefore - gasleft();
+
+        hoax(user, 2*defaultPrice);
+        gasBefore = gasleft();
+        eNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId, address(eNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+        uint256 gasSpentENFT = gasBefore - gasleft();
+
+        // should be at least 20% cheaper 
+        assertLe(gasSpentHNFT * 100 / gasSpentENFT, 80, "Wrong gas usage");
+
+        console.log("hNFT:", gasSpentHNFT);
+        console.log("eNFT:", gasSpentENFT);
+
+        console.log("%%:", gasSpentHNFT * 100 / gasSpentENFT);
+    }
+
+    function test_gasUsage_10000_mint() public {
+        vm.skip(true);
+        uint256 maxAmount = 10000;
+
+        vm.startPrank(deployer.addr);
+        uint256 gasBefore = gasleft();
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+        uint256 gasSpentHNFT = gasBefore - gasleft();
+        gasBefore = gasleft();
+        ExpensiveNFT eNFT = new ExpensiveNFT(maxAmount, defaultPrice, taxRate);
+        uint256 gasSpentENFT = gasBefore - gasleft();
+        vm.stopPrank();
+
+        for (uint256 i; i < 10000; ++i) {
+            hoax(user, 2*defaultPrice);
+            gasBefore = gasleft();
+            hNFT.mint{value: 2*defaultPrice}(
+                _getSignature(user, i, address(hNFT)),
+                i,
+                uint128(3*defaultPrice)
+            );
+            gasSpentHNFT += gasBefore - gasleft();
+        }
+        
+        for (uint256 i; i < 10000; ++i) {
+            hoax(user, 2*defaultPrice);
+            gasBefore = gasleft();
+            eNFT.mint{value: 2*defaultPrice}(
+                _getSignature(user, i, address(eNFT)),
+                i,
+                uint128(3*defaultPrice)
+            );
+            gasSpentENFT += gasBefore - gasleft();
+        }
+
+        // should be at least 20% cheaper 
+        assertLe(gasSpentHNFT * 100 / gasSpentENFT, 80, "Wrong gas usage");
+
+        console.log("hNFT:", gasSpentHNFT);
+        console.log("eNFT:", gasSpentENFT);
+
+        console.log("%%:", gasSpentHNFT * 100 / gasSpentENFT);
+    }
+
+    function test_buy() public {
+        vm.skip(false);
+        vm.warp(1); // reset time
+
+        uint256 maxAmount = 6000;
+        uint256 defPrice = 1 ether;
+        uint256 txRate = 100;
+        address buyer = makeAddr("buyer");
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defPrice, txRate);        
+
+        hoax(user, 5*defPrice);
+        uint256 tokenId = hNFT.mint{value: 5*defPrice}(
+            _getSignature(user, userId, address(hNFT)),
+            userId,
+            uint128(10*defPrice)
+        );
+
+        (,,, uint256 timeLeft) = hNFT.getTokenInfo(tokenId);
+        // skip half of the payed time
+        vm.warp(block.timestamp + timeLeft / 2);
+
+        vm.expectEmit();
+        emit HarbergerNFT.Bought(buyer, tokenId);
+
+        hoax(buyer, 11 * defPrice);
+        hNFT.buy{value: 11 * defPrice}(tokenId, uint128(5 * defPrice));
+
+        (
+            address owner,
+            uint256 currentPrice,
+            uint256 depositLeft,
+        ) = hNFT.getTokenInfo(tokenId);
+
+        assertEq(owner, buyer, "Wrong owner");
+        assertEq(user.balance, (10 + 4 / 2) * defPrice, "Wrong user balance");
+        assertEq(currentPrice, 5 * defPrice, "Wrong current price");
+        assertEq(depositLeft, defPrice, "Wrong deposit left");
+
+        // skip to time when deposit is 0
+        vm.warp(block.timestamp + timeLeft);
+        vm.prank(user);
+        hNFT.buy{value: 2 * defPrice}(tokenId, uint128(100 * defPrice));
+
+        (
+            owner,
+            currentPrice,
+            depositLeft,
+            timeLeft
+        ) = hNFT.getTokenInfo(tokenId);
+
+        assertEq(owner, user, "Wrong owner 2");
+        assertEq(buyer.balance, 0, "Wrong buyer balance");
+        assertEq(currentPrice, 100 * defPrice, "Wrong current price 2");
+        assertEq(depositLeft, defPrice, "Wrong deposit left 2");
+        assertEq(timeLeft, 3153600, "Wrong time left");
+    }
+
+    function test_invalid_signer() public {
+        vm.skip(false);
+        uint256 maxAmount = 10000;
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        deployer = vm.createWallet("fake deployer");
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidSignature.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+    }
+
+    function test_invalid_sig_message() public {
+        vm.skip(false);
+        uint256 maxAmount = 3000;
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+        
+        bytes32 messageHash = keccak256(bytes.concat(
+            "\x19Ethereum Signed Message:\n",
+            "96",
+            bytes32(bytes20(user)),
+            bytes32(userId),
+            bytes32(bytes20(address(hNFT)))
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(deployer.privateKey, messageHash);
+        bytes memory signature = bytes.concat(r, s, bytes1(v));
+
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidSignature.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            signature,
+            userId,
+            uint128(3*defaultPrice)
+        );
+    }
+
+    function test_invalid_receiver() public {
+        vm.skip(false);
+        uint256 maxAmount = 7000;
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidSignature.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(makeAddr("wrong user"), userId, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+    }
+
+    function test_invalid_userId() public {
+        vm.skip(true);
+        uint256 maxAmount = 7000;
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidSignature.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId + 1, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidMint.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, maxAmount + 1, address(hNFT)),
+            maxAmount + 1,
+            uint128(3*defaultPrice)
+        );
+    }
+
+    function test_invalid_double_mint() public {
+        vm.skip(true);
+        uint256 maxAmount = 700;
+
+        vm.prank(deployer.addr);
+        HarbergerNFT hNFT = new HarbergerNFT(maxAmount, defaultPrice, taxRate);
+
+        hoax(user, 2*defaultPrice);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
+
+        hoax(user, 2*defaultPrice);
+        vm.expectRevert(HarbergerNFT.InvalidMint.selector);
+        hNFT.mint{value: 2*defaultPrice}(
+            _getSignature(user, userId, address(hNFT)),
+            userId,
+            uint128(3*defaultPrice)
+        );
     }
 
     function _getSignature(
         address _receiver,
-        uint256 _userId
+        uint256 _userId,
+        address _contract
     ) internal view returns(bytes memory) {
         bytes32 messageHash = keccak256(bytes.concat(
             "\x19Ethereum Signed Message:\n",
-            "52",
+            "72",
             bytes20(_receiver),
-            bytes32(_userId)
+            bytes32(_userId),
+            bytes20(_contract)
         ));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(deployer.privateKey, messageHash);
         return bytes.concat(r, s, bytes1(v));
