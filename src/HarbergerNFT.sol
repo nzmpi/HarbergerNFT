@@ -150,6 +150,7 @@ contract HarbergerNFT {
     }
 
     function deposit(uint256 tokenId) external payable guard {
+        if (_tokenInfos[tokenId].owner == address(0)) revert NotMinted();
         _tokenInfos[tokenId].deposit += uint128(msg.value);
         emit Deposited(msg.sender, tokenId, msg.value);
     }
