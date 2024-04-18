@@ -1,6 +1,11 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+/**
+ * @title HarbergerNFT
+ * @notice This contract is an example of an ERC721 token,
+ * that implements the Harberger tax and cheap mass minting feature.
+ */
 contract HarbergerNFT {
     // keccak256(abi.encode(uint256(keccak256("LIST_SLOT")) - 1)) & ~bytes32(uint256(0xff))
     uint256 constant LIST_SLOT = 36774421528551533216570696737164983923400338544039802950506299840970426934528;
@@ -11,6 +16,13 @@ contract HarbergerNFT {
     uint256 public immutable TAX_RATE;
     uint256 _totalSupply;
 
+    /**
+     * @notice Token information
+     * @param deposit The amount of ETH deposited to pay for tax
+     * @param price The price of the token
+     * @param priceTime The timestamp of the last price change
+     * @param owner The owner of the token
+     */
     struct TokenInfo {
         uint128 deposit;
         uint128 price;
@@ -33,6 +45,10 @@ contract HarbergerNFT {
     event Minted(address indexed newOwner, uint256 indexed tokenId);
     event Withdrawn(address indexed sender, uint256 indexed tokenId, uint256 amount);
 
+    /**
+     * @notice A modifier that prevents reentrancy
+     * @dev Uses transient storage to make it cheaper
+     */
     modifier guard() {
         assembly {
             if eq(tload(0), 1) {
@@ -48,6 +64,13 @@ contract HarbergerNFT {
         }
     }
 
+    /**
+     * @notice Prepares the contract by filling the storage with
+     * _maxAmount of bits
+     * @param _maxAmount The maximum amount of tokens
+     * @param _defaultPrice The default price
+     * @param _taxRate The tax rate
+     */
     constructor(uint256 _maxAmount, uint256 _defaultPrice, uint256 _taxRate) payable {
         require(_maxAmount > 0);
         DEPLOYER = msg.sender;
@@ -76,6 +99,13 @@ contract HarbergerNFT {
         }
     }
 
+    /**
+     * @notice Mint a new token
+     * @param signature The signature signed by the deployer
+     * @param userId The id of the user
+     * @param newPrice The new price of a minted token
+     * @return tokenId The id of the new token
+     */
     function mint(bytes calldata signature, uint256 userId, uint128 newPrice)
         external
         payable
@@ -98,6 +128,11 @@ contract HarbergerNFT {
         emit Minted(msg.sender, tokenId);
     }
 
+    /**
+     * @notice Buy a minted token
+     * @param tokenId The id of the token
+     * @param newPrice The new price of the token
+     */
     function buy(uint256 tokenId, uint128 newPrice) external payable guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         address oldOwner = info.owner;
@@ -122,14 +157,22 @@ contract HarbergerNFT {
         info.priceTime = uint96(block.timestamp);
         info.deposit = uint128(msg.value - priceToSell);
 
+        // Transfer ETH to the old owner
+        // Does not revert if the transfer fails to
+        // prevent a DoS attack
         if (oldOwnerAmount > 0) {
             (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
-            s;// remove unused warning
+            s; // remove unused warning
         }
 
         emit Bought(msg.sender, tokenId);
     }
 
+    /**
+     * @notice The owner can set the price of their token
+     * @param tokenId The id of the token
+     * @param newPrice The new price
+     */
     function setPrice(uint256 tokenId, uint128 newPrice) external guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
@@ -149,12 +192,21 @@ contract HarbergerNFT {
         info.priceTime = uint96(block.timestamp);
     }
 
+    /**
+     * @notice Anyone can deposit ETH to a minted token
+     * @param tokenId The id of the token
+     */
     function deposit(uint256 tokenId) external payable guard {
         if (_tokenInfos[tokenId].owner == address(0)) revert NotMinted();
         _tokenInfos[tokenId].deposit += uint128(msg.value);
         emit Deposited(msg.sender, tokenId, msg.value);
     }
 
+    /**
+     * @notice The owner can withdraw ETH from their token deposit minus tax
+     * @param tokenId The id of the token
+     * @param amount The amount to withdraw
+     */
     function withdraw(uint256 tokenId, uint256 amount) external guard {
         TokenInfo storage info = _tokenInfos[tokenId];
         if (msg.sender != info.owner) revert NotOwner();
@@ -177,6 +229,14 @@ contract HarbergerNFT {
         emit Withdrawn(msg.sender, tokenId, amount);
     }
 
+    /**
+     * @notice Get information about a token
+     * @param tokenId The id of the token
+     * @return owner The owner of the token
+     * @return price The price of the token
+     * @return depositLeft The amount of ETH left in the deposit minus tax
+     * @return timeLeft The ownership time left that is covered by the deposit
+     */
     function getTokenInfo(uint256 tokenId) external view returns (
         address owner,
         uint256 price,
@@ -200,6 +260,12 @@ contract HarbergerNFT {
         }
     }
 
+    /**
+     * @notice Check if the signature is valid
+     * @param _signature The signature
+     * @param _userId The id of the user
+     * @return true if the signature is valid, false otherwise
+     */
     function _isSigValid(
         bytes calldata _signature,
         uint256 _userId
@@ -207,7 +273,7 @@ contract HarbergerNFT {
         (bytes32 r, bytes32 s, uint8 v) = _splitSignature(_signature);
         bytes32 messageHash = keccak256(bytes.concat(
             "\x19Ethereum Signed Message:\n",
-            "72", 
+            "72",
             bytes20(msg.sender),
             bytes32(_userId),
             bytes20(address(this))
@@ -217,24 +283,34 @@ contract HarbergerNFT {
         return DEPLOYER == ecrecover(messageHash, v, r, s);
     }
 
+    /**
+     * @notice Check if the user has minted
+     * @param _userId The id of the user
+     */
     function _verifyMint(uint256 _userId) internal {
-        uint256 slotNumber = _userId / 256 + LIST_SLOT;
-        uint256 offsetInSlot = _userId % 256;
+        unchecked {
+            uint256 slotNumber = _userId / 256 + LIST_SLOT;
+            uint256 offsetInSlot = _userId % 256;
 
-        uint256 value;
-        assembly {
-            value := sload(slotNumber)
-        }
+            uint256 value;
+            assembly {
+                value := sload(slotNumber)
+            }
  
-        uint256 hasMinted = (value >> offsetInSlot) & 1;
-        if (hasMinted == 0) revert InvalidMint();
-        value &= ~(1 << offsetInSlot);
+            uint256 hasMinted = (value >> offsetInSlot) & 1;
+            if (hasMinted == 0) revert InvalidMint();
+            value &= ~(1 << offsetInSlot);
 
-        assembly {
-            sstore(slotNumber, value)
+            assembly {
+                sstore(slotNumber, value)
+            }
         }
     }
-    
+
+    /**
+     * @notice Split the signature
+     * @dev Using calldata instead of memory to reduce gas usage
+     */
     function _splitSignature(bytes calldata) internal pure returns (
         bytes32 r,
         bytes32 s,
@@ -245,11 +321,18 @@ contract HarbergerNFT {
         v = uint8(bytes1(msg.data[196:204]));
     }
 
+    /**
+     * @notice Calculate the tax
+     * @param _price The price of the token
+     * @param _priceTime The price time
+     * @return The tax
+     */
     function _calculateTax(uint256 _price, uint256 _priceTime) 
         internal
         view
         returns (uint256)
     {
+        // TAX_RATE = 1000 == 100%
         return (_price * TAX_RATE * (block.timestamp - _priceTime)) / (ONE_YEAR * 1000);
     }
 
