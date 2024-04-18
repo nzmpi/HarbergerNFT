@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 contract HarbergerNFT {
-    uint256 constant ONE_YEAR = 365 days;
     // keccak256(abi.encode(uint256(keccak256("LIST_SLOT")) - 1)) & ~bytes32(uint256(0xff))
     uint256 constant LIST_SLOT = 36774421528551533216570696737164983923400338544039802950506299840970426934528;
-    address public immutable DEPLOYER;
+    uint256 constant ONE_YEAR = 365 days;
     uint256 public immutable DEFAULT_PRICE;
+    address public immutable DEPLOYER;
     // 1 == 0.1%
     uint256 public immutable TAX_RATE;
     uint256 _totalSupply;
@@ -21,16 +21,16 @@ contract HarbergerNFT {
     mapping(uint256 tokenId => TokenInfo) _tokenInfos;
 
     error InsufficientFunds();
-    error NotOwner();
     error InvalidMint();
+    error InvalidSend();
     error InvalidSignature();
     error NotMinted();
+    error NotOwner();
     error Reentry();
-    error InvalidSend();
 
-    event Minted(address indexed newOwner, uint256 indexed tokenId);
     event Bought(address indexed newOwner, uint256 indexed tokenId);
     event Deposited(address indexed donor, uint256 indexed tokenId, uint256 amount);
+    event Minted(address indexed newOwner, uint256 indexed tokenId);
     event Withdrawn(address indexed sender, uint256 indexed tokenId, uint256 amount);
 
     modifier guard() {
