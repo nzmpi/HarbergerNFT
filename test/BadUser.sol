@@ -20,6 +20,10 @@ contract BadUser {
         tknId = tokenId;
     }
 
+    function withdraw(uint256 tokenId, uint256 amount) external {
+        hNFT.withdraw(tokenId, amount);
+    }
+
     receive() external payable {
         hNFT.deposit{value: 1}(tknId);
     }
