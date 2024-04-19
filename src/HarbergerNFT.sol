@@ -114,7 +114,7 @@ contract HarbergerNFT {
         if (msg.value < DEFAULT_PRICE) revert InsufficientFunds();
         if (!_isSigValid(signature, userId)) revert InvalidSignature();
         _verifyMint(userId);
-        
+
         unchecked {
             tokenId = _totalSupply;
             TokenInfo storage info = _tokenInfos[tokenId];
@@ -237,12 +237,11 @@ contract HarbergerNFT {
      * @return depositLeft The amount of ETH left in the deposit minus tax
      * @return timeLeft The ownership time left that is covered by the deposit
      */
-    function getTokenInfo(uint256 tokenId) external view returns (
-        address owner,
-        uint256 price,
-        uint256 depositLeft,
-        uint256 timeLeft
-    ) {
+    function getTokenInfo(uint256 tokenId)
+        external
+        view
+        returns (address owner, uint256 price, uint256 depositLeft, uint256 timeLeft)
+    {
         TokenInfo storage info = _tokenInfos[tokenId];
         depositLeft = info.deposit;
         price = info.price;
@@ -250,8 +249,7 @@ contract HarbergerNFT {
         owner = info.owner;
         if (taxToPay < depositLeft) {
             unchecked {
-                timeLeft =
-                    ((depositLeft - taxToPay) * ONE_YEAR * 1000) / (price * TAX_RATE);
+                timeLeft = ((depositLeft - taxToPay) * ONE_YEAR * 1000) / (price * TAX_RATE);
                 depositLeft -= taxToPay;
             }
         } else {
@@ -266,18 +264,13 @@ contract HarbergerNFT {
      * @param _userId The id of the user
      * @return true if the signature is valid, false otherwise
      */
-    function _isSigValid(
-        bytes calldata _signature,
-        uint256 _userId
-    ) internal view returns (bool) {
+    function _isSigValid(bytes calldata _signature, uint256 _userId) internal view returns (bool) {
         (bytes32 r, bytes32 s, uint8 v) = _splitSignature(_signature);
-        bytes32 messageHash = keccak256(bytes.concat(
-            "\x19Ethereum Signed Message:\n",
-            "72",
-            bytes20(msg.sender),
-            bytes32(_userId),
-            bytes20(address(this))
-        ));
+        bytes32 messageHash = keccak256(
+            bytes.concat(
+                "\x19Ethereum Signed Message:\n", "72", bytes20(msg.sender), bytes32(_userId), bytes20(address(this))
+            )
+        );
 
         // DEPLOYER is by default non-zero
         return DEPLOYER == ecrecover(messageHash, v, r, s);
@@ -296,7 +289,7 @@ contract HarbergerNFT {
             assembly {
                 value := sload(slotNumber)
             }
- 
+
             uint256 hasMinted = (value >> offsetInSlot) & 1;
             if (hasMinted == 0) revert InvalidMint();
             value &= ~(1 << offsetInSlot);
@@ -311,11 +304,7 @@ contract HarbergerNFT {
      * @notice Split the signature
      * @dev Using calldata instead of memory to reduce gas usage
      */
-    function _splitSignature(bytes calldata) internal pure returns (
-        bytes32 r,
-        bytes32 s,
-        uint8 v
-    ) {
+    function _splitSignature(bytes calldata) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
         r = bytes32(msg.data[132:164]);
         s = bytes32(msg.data[164:196]);
         v = uint8(bytes1(msg.data[196:204]));
@@ -327,11 +316,7 @@ contract HarbergerNFT {
      * @param _priceTime The price time
      * @return The tax
      */
-    function _calculateTax(uint256 _price, uint256 _priceTime) 
-        internal
-        view
-        returns (uint256)
-    {
+    function _calculateTax(uint256 _price, uint256 _priceTime) internal view returns (uint256) {
         // TAX_RATE = 1000 == 100%
         return (_price * TAX_RATE * (block.timestamp - _priceTime)) / (ONE_YEAR * 1000);
     }

@@ -54,28 +54,19 @@ contract ExpensiveNFT {
         emit Minted(msg.sender, tokenId);
     }
 
-    function _isSigValid(
-        bytes calldata _signature,
-        uint256 _userId
-    ) internal view returns (bool) {
+    function _isSigValid(bytes calldata _signature, uint256 _userId) internal view returns (bool) {
         (bytes32 r, bytes32 s, uint8 v) = _splitSignature(_signature);
-        bytes32 messageHash = keccak256(bytes.concat(
-            "\x19Ethereum Signed Message:\n",
-            "72",
-            bytes20(msg.sender),
-            bytes32(_userId),
-            bytes20(address(this))
-        ));
+        bytes32 messageHash = keccak256(
+            bytes.concat(
+                "\x19Ethereum Signed Message:\n", "72", bytes20(msg.sender), bytes32(_userId), bytes20(address(this))
+            )
+        );
 
         // DEPLOYER is by default non-zero
         return DEPLOYER == ecrecover(messageHash, v, r, s);
     }
 
-    function _splitSignature(bytes calldata) internal pure returns (
-        bytes32 r,
-        bytes32 s,
-        uint8 v
-    ) {
+    function _splitSignature(bytes calldata) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
         r = bytes32(msg.data[132:164]);
         s = bytes32(msg.data[164:196]);
         v = uint8(bytes1(msg.data[196:204]));
