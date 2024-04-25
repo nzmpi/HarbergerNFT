@@ -42,6 +42,8 @@ And only owners can withdraw ETH from their deposit using
 will return the address of the owner, the price of the token, the deposit left (minus tax) and 
 the time left (in seconds) until the price is set to the default one.
 
+Additionally, the contract uses `transient` storage for the reentrancy guard. 
+
 ## TODO
 
 Make it a proper ERC721 token, maybe add frontend.
