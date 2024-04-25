@@ -3,8 +3,8 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/HarbergerNFT.sol";
-import "./ExpensiveNFT.sol";
-import {BadUser} from "./BadUser.sol";
+import "./utils/ExpensiveNFT.sol";
+import {BadUser} from "./utils/BadUser.sol";
 
 contract TestHarbergerNFT is Test {
     Vm.Wallet deployer = vm.createWallet("deployer");
