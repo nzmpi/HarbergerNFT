@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 /**
  * @title HarbergerNFT
  * @notice This contract is an example of an ERC721 token,
- * that implements the Harberger tax and cheap mass minting feature.
+ * that implements the Harberger tax and a cheap mass minting feature.
  */
 contract HarbergerNFT {
     // keccak256(abi.encode(uint256(keccak256("LIST_SLOT")) - 1)) & ~bytes32(uint256(0xff))
@@ -46,7 +46,7 @@ contract HarbergerNFT {
     event Withdrawn(address indexed sender, uint256 indexed tokenId, uint256 amount);
 
     /**
-     * @notice A modifier that prevents reentrancy
+     * @notice A modifier that prevents reentrancies
      * @dev Uses transient storage to make it cheaper
      */
     modifier guard() {
@@ -158,8 +158,8 @@ contract HarbergerNFT {
         info.deposit = uint128(msg.value - priceToSell);
 
         // Transfer ETH to the old owner
-        // Does not revert if the transfer fails to
-        // prevent a DoS attack
+        // Does not revert if the transfer fails
+        // to prevent a DoS attack
         if (oldOwnerAmount > 0) {
             (bool s,) = oldOwner.call{value: oldOwnerAmount}("");
             s; // remove unused warning
@@ -277,7 +277,7 @@ contract HarbergerNFT {
     }
 
     /**
-     * @notice Check if the user has minted
+     * @notice Check if the user has minted and update the list
      * @param _userId The id of the user
      */
     function _verifyMint(uint256 _userId) internal {
