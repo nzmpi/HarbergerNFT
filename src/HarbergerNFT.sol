@@ -51,7 +51,7 @@ contract HarbergerNFT {
      */
     modifier guard() {
         assembly {
-            if eq(tload(0), 1) {
+            if tload(0) {
                 // Reentry.selector
                 mstore(0, 0x976f9b8400000000000000000000000000000000000000000000000000000000)
                 revert(0, 4)
